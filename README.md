@@ -51,9 +51,22 @@ Depending on your environment, Paddle may also require extra runtime libraries s
 
 ## Python dependencies
 
-Install the project and its Python dependencies:
+### With a virtual environment
+
+Recommended installation:
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt
+pip install -e .
+```
+
+### Without a virtual environment
+
+```bash
+pip install -r requirements.txt
 pip install -e .
 ```
 
@@ -79,6 +92,12 @@ Common options:
 pdf2ppt input.pdf output.pptx --ocr auto --ocr-engine paddle --deskew true
 pdf2ppt input.pdf output.pptx --pages 1-3,5
 pdf2ppt input.pdf output.pptx --debug-layout
+```
+
+To convert a full PDF in the current directory:
+
+```bash
+PYTHONPATH=/project/pdf2ppt/src /project/pdf2ppt/.venv/bin/python -m pdf2ppt.cli input.pdf out.pptx --ocr auto --ocr-engine paddle
 ```
 
 ## Notes

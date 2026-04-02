@@ -38,8 +38,24 @@ def _add_textbox(slide, textbox: TextBox, page_height_pt: float):
     width = _pt_to_emu(width_pt)
     height = _pt_to_emu(height_pt)
     shape = slide.shapes.add_textbox(left, top, width, height)
+    if textbox.fill_color:
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = _hex_to_rgb(textbox.fill_color)
+    else:
+        shape.fill.background()
+    if textbox.stroke_color:
+        shape.line.color.rgb = _hex_to_rgb(textbox.stroke_color)
+        shape.line.width = Pt(0)
+    else:
+        shape.line.fill.background()
+        shape.line.width = Pt(0)
     txf = shape.text_frame
     txf.clear()
+    txf.word_wrap = True
+    txf.margin_left = 0
+    txf.margin_right = 0
+    txf.margin_top = 0
+    txf.margin_bottom = 0
     for i, para in enumerate(textbox.paragraphs):
         p = txf.paragraphs[0] if i == 0 else txf.add_paragraph()
         for run in para.runs:

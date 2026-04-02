@@ -49,6 +49,58 @@ def _sample_color_bgr(image: np.ndarray, rect_px: Rect) -> Tuple[int, int, int]:
     return int(b), int(g), int(r)
 
 
+def _inflate_rect(rect_px: Rect, pad_x: int, pad_y: int, width: int, height: int) -> Rect:
+    return _clip_rect(
+        Rect(rect_px.x0 - pad_x, rect_px.y0 - pad_y, rect_px.x1 + pad_x, rect_px.y1 + pad_y),
+        width,
+        height,
+    )
+
+
+def _outer_band_pixels(image: np.ndarray, rect_px: Rect, band_px: int = 2) -> np.ndarray:
+    h, w = image.shape[:2]
+    r = _clip_rect(rect_px, w, h)
+    x0, y0, x1, y1 = map(int, (r.x0, r.y0, r.x1, r.y1))
+    if x1 <= x0 or y1 <= y0:
+        return np.empty((0, 3), dtype=np.uint8)
+    parts = []
+
+    def add_patch(xs: int, xe: int, ys: int, ye: int) -> None:
+        xs = max(0, min(w, xs))
+        xe = max(0, min(w, xe))
+        ys = max(0, min(h, ys))
+        ye = max(0, min(h, ye))
+        if xe <= xs or ye <= ys:
+            return
+        patch = image[ys:ye, xs:xe]
+        if patch.size:
+            parts.append(patch.reshape(-1, 3))
+
+    add_patch(x0, x1, y0 - band_px, y0)
+    add_patch(x0, x1, y1, y1 + band_px)
+    add_patch(x0 - band_px, x0, y0, y1)
+    add_patch(x1, x1 + band_px, y0, y1)
+    if not parts:
+        return np.empty((0, 3), dtype=np.uint8)
+    return np.concatenate(parts, axis=0)
+
+
+def _estimate_background_variance(image: np.ndarray, rect_px: Rect, band_px: int = 2) -> float:
+    pixels = _outer_band_pixels(image, rect_px, band_px=band_px)
+    if pixels.size == 0:
+        return float("inf")
+    return float(pixels.astype(np.float32).var(axis=0).mean())
+
+
+def _sample_background_color_bgr(image: np.ndarray, rect_px: Rect, band_px: int = 2) -> Tuple[int, int, int]:
+    pixels = _outer_band_pixels(image, rect_px, band_px=band_px)
+    if pixels.size == 0:
+        return _sample_color_bgr(image, rect_px)
+    median = np.median(pixels.astype(np.float32), axis=0)
+    b, g, r = median.tolist()
+    return int(b), int(g), int(r)
+
+
 def _bgr_to_hex(bgr: Tuple[int, int, int]) -> str:
     b, g, r = bgr
     return f"#{r:02x}{g:02x}{b:02x}"
@@ -231,10 +283,14 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
 
     boxes: List[TextBox] = []
     for rect_px, text, conf in raw_boxes:
-        rect_pt = _px_rect_to_pdf(rect_px, page.rect.width, page.rect.height, image.shape[1], image.shape[0])
+        pad_y = max(int((rect_px.y1 - rect_px.y0) * 0.12), 2)
+        pad_x = max(int((rect_px.y1 - rect_px.y0) * 0.05), 1)
+        rect_mask_px = _inflate_rect(rect_px, pad_x, pad_y, image.shape[1], image.shape[0])
+        rect_pt = _px_rect_to_pdf(rect_mask_px, page.rect.width, page.rect.height, image.shape[1], image.shape[0])
         height_pt = max(rect_pt.y1 - rect_pt.y0, 1.0)
-        font_size = max(height_pt * 0.9, 8)
+        font_size = max(height_pt * 0.88, 8)
         color_hex = _bgr_to_hex(_sample_color_bgr(image, rect_px))
+        bg_hex = _bgr_to_hex(_sample_background_color_bgr(image, rect_px))
         is_bold = _estimate_bold(image, rect_px)
         run = TextRun(
             text=text.lstrip("\n"),
@@ -245,7 +301,17 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
             color=color_hex,
         )
         para = Paragraph(runs=[run])
-        box = TextBox(bbox=rect_pt, paragraphs=[para], z_index=0, is_ocr=True)
+        box = TextBox(
+            bbox=rect_pt,
+            paragraphs=[para],
+            z_index=0,
+            is_ocr=True,
+            fill_color=bg_hex,
+            stroke_color=bg_hex,
+        )
+        if _estimate_background_variance(image, rect_px) > 1500.0:
+            box.fill_color = None
+            box.stroke_color = None
         box.confidence = conf  # type: ignore
         boxes.append(box)
 
