@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import List, Tuple
 
 import cv2
 import numpy as np
 import pytesseract
 from lxml import html
+from PIL import Image
 
 from ..model.elements import Paragraph, Rect, TextBox, TextRun
 from ..model.normalize import font_fallback
@@ -15,6 +17,12 @@ try:
     _PADDLE_AVAILABLE = True
 except Exception:
     _PADDLE_AVAILABLE = False
+
+try:
+    from simple_lama_inpainting import SimpleLama  # type: ignore
+    _SIMPLE_LAMA_AVAILABLE = True
+except Exception:
+    _SIMPLE_LAMA_AVAILABLE = False
 
 
 def _clip_rect(rect: Rect, width: int, height: int) -> Rect:
@@ -258,14 +266,94 @@ def _paddle_boxes(image: np.ndarray, languages: str) -> List[Tuple[Rect, str, fl
     return results
 
 
+def _detect_raw_boxes(image: np.ndarray, languages: str, engine: str) -> List[Tuple[Rect, str, float]]:
+    if engine == "paddle" and _PADDLE_AVAILABLE:
+        try:
+            return _paddle_boxes(image, languages)
+        except Exception:
+            pass
+    if engine == "hocr":
+        try:
+            return _pytesseract_lines_hocr(image, languages)
+        except Exception:
+            pass
+    try:
+        return _pytesseract_boxes_data(image, languages)
+    except Exception:
+        return []
+
+
+def _build_ocr_textbox(
+    image: np.ndarray,
+    page,
+    rect_px: Rect,
+    text: str,
+    conf: float,
+    pad_x: int,
+    pad_y: int,
+) -> tuple[TextBox, Rect, float]:
+    rect_mask_px = _inflate_rect(rect_px, pad_x, pad_y, image.shape[1], image.shape[0])
+    rect_pt = _px_rect_to_pdf(rect_px, page.rect.width, page.rect.height, image.shape[1], image.shape[0])
+    height_pt = max(rect_pt.y1 - rect_pt.y0, 1.0)
+    font_size = max(height_pt * 0.88, 8)
+    color_hex = _bgr_to_hex(_sample_color_bgr(image, rect_px))
+    bg_hex = _bgr_to_hex(_sample_background_color_bgr(image, rect_px))
+    is_bold = _estimate_bold(image, rect_px)
+    run = TextRun(
+        text=text.lstrip("\n"),
+        font_family=font_fallback("Arial"),
+        font_size_pt=font_size,
+        bold=is_bold,
+        italic=False,
+        color=color_hex,
+    )
+    para = Paragraph(runs=[run])
+    box = TextBox(
+        bbox=rect_pt,
+        paragraphs=[para],
+        z_index=0,
+        is_ocr=True,
+        fill_color=bg_hex,
+        stroke_color=bg_hex,
+    )
+    if _estimate_background_variance(image, rect_px) > 1500.0:
+        box.fill_color = None
+        box.stroke_color = None
+    box.confidence = conf  # type: ignore
+    return box, rect_mask_px, float(_estimate_background_variance(image, rect_px))
+
+
+@lru_cache(maxsize=1)
+def _simple_lama_model():
+    if not _SIMPLE_LAMA_AVAILABLE:
+        return None
+    return SimpleLama()
+
+
+def _run_simple_lama_inpaint(image: np.ndarray, mask: np.ndarray) -> np.ndarray | None:
+    model = _simple_lama_model()
+    if model is None:
+        return None
+    if mask.max() == 0:
+        return image
+    pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    pil_mask = Image.fromarray(mask)
+    result = model(pil_image, pil_mask)
+    result_arr = np.array(result)
+    if result_arr.ndim != 3 or result_arr.shape[:2] != image.shape[:2]:
+        return None
+    return cv2.cvtColor(result_arr, cv2.COLOR_RGB2BGR)
+
+
 def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = False, engine: str = "paddle") -> List[TextBox]:
     pix = page.get_pixmap()
     buf = np.frombuffer(pix.samples, dtype=np.uint8)
     if pix.n == 4:
         image = buf.reshape(pix.height, pix.width, 4)
-        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
     elif pix.n == 3:
         image = buf.reshape(pix.height, pix.width, 3)
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     elif pix.n == 1:
         image = buf.reshape(pix.height, pix.width)
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
@@ -274,12 +362,7 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
     if deskew and engine != "paddle":  # paddle 有 angle_cls，本身可矯正
         image = _deskew_image(image)
 
-    if engine == "paddle" and _PADDLE_AVAILABLE:
-        raw_boxes = _paddle_boxes(image, languages)
-    elif engine == "hocr":
-        raw_boxes = _pytesseract_lines_hocr(image, languages)
-    else:
-        raw_boxes = _pytesseract_boxes_data(image, languages)
+    raw_boxes = _detect_raw_boxes(image, languages, engine)
 
     boxes: List[TextBox] = []
     for rect_px, text, conf in raw_boxes:
@@ -318,3 +401,54 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
     if debug:
         print(f"ocr: detected {len(boxes)} boxes on page {page.number} using {engine}")
     return boxes
+
+
+def clean_page_background(page, languages: str, deskew: bool = True, engine: str = "paddle", use_ai: bool = True) -> tuple[List[TextBox], np.ndarray]:
+    pix = page.get_pixmap()
+    buf = np.frombuffer(pix.samples, dtype=np.uint8)
+    if pix.n == 4:
+        image = buf.reshape(pix.height, pix.width, 4)
+        image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
+    elif pix.n == 3:
+        image = buf.reshape(pix.height, pix.width, 3)
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    elif pix.n == 1:
+        image = buf.reshape(pix.height, pix.width)
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    else:
+        image = buf.reshape(pix.height, pix.width, pix.n)
+    if deskew and engine != "paddle":
+        image = _deskew_image(image)
+    image = image.copy()
+
+    raw_boxes = _detect_raw_boxes(image, languages, engine)
+
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    boxes: List[TextBox] = []
+    for rect_px, text, conf in raw_boxes:
+        if conf < 0:
+            continue
+        pad_y = max(int((rect_px.y1 - rect_px.y0) * 0.02), 0)
+        pad_x = max(int((rect_px.x1 - rect_px.x0) * 0.02), 0)
+        box, rect_mask_px, variance = _build_ocr_textbox(image, page, rect_px, text, conf, pad_x, pad_y)
+        boxes.append(box)
+        x0, y0, x1, y1 = map(int, (rect_mask_px.x0, rect_mask_px.y0, rect_mask_px.x1, rect_mask_px.y1))
+        if x1 <= x0 or y1 <= y0:
+            continue
+        if variance > 1500.0 and float(conf) >= 35:
+            mask[y0:y1, x0:x1] = 255
+        else:
+            cleaned_color = _sample_background_color_bgr(image, rect_px)
+            cleaned_patch = np.empty((y1 - y0, x1 - x0, 3), dtype=np.uint8)
+            cleaned_patch[:, :] = cleaned_color
+            image[y0:y1, x0:x1] = cleaned_patch
+
+    cleaned_image = None
+    cleaned_image = None
+    if use_ai:
+        cleaned_image = _run_simple_lama_inpaint(image, mask)
+    if cleaned_image is None and mask.any():
+        cleaned_image = cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
+    if cleaned_image is None:
+        cleaned_image = image
+    return boxes, cleaned_image

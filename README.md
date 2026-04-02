@@ -49,6 +49,18 @@ pip install paddlepaddle paddleocr
 
 Depending on your environment, Paddle may also require extra runtime libraries such as OpenCV and OpenVINO-compatible components. The repo already depends on OpenCV through Python packages.
 
+PaddleOCR model files are cached under `~/.paddlex/official_models/` (for example `PP-OCRv5_server_det` and `PP-OCRv5_server_rec`). Delete those directories if you want to force a fresh model download.
+
+### Optional AI background cleanup
+
+The image-only page path can use a mask-guided AI inpainting model to remove baked-in text from the raster background before inserting it into PPTX.
+
+```bash
+pip install simple-lama-inpainting Pillow
+```
+
+The current implementation uses the OCR boxes as the inpainting mask and falls back to OpenCV inpainting if the AI backend is unavailable.
+
 ## Python dependencies
 
 ### With a virtual environment

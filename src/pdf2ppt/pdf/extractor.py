@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import cv2
 import fitz
 from typing import Dict, List, Optional
 
@@ -14,7 +15,7 @@ from ..model.elements import (
 )
 from ..model.normalize import font_fallback, normalize_font_name
 from ..model.grouping import merge_spans_into_lines
-from .ocr import ocr_page_if_needed
+from .ocr import clean_page_background, ocr_page_if_needed
 
 __all__ = ["extract_document", "_parse_pages"]
 
@@ -133,6 +134,31 @@ def extract_document(
                 # render page as background image to preserve appearance
                 bg_ref = f"p{page_no}_bg"
                 try:
+                    ocr_boxes, cleaned_image = clean_page_background(
+                        page=page,
+                        languages=ocr_lang,
+                        deskew=deskew,
+                        engine=ocr_engine,
+                        use_ai=True,
+                    )
+                    images_store[bg_ref] = cv2.imencode(".png", cleaned_image)[1].tobytes()
+                    elements.append(
+                        ImageElement(
+                            bbox=Rect(0, 0, width, height),
+                            image_ref=bg_ref,
+                            mime_type="png",
+                            pixel_width=cleaned_image.shape[1],
+                            pixel_height=cleaned_image.shape[0],
+                            transform=None,
+                            alpha=True,
+                            rotation=0.0,
+                            z_index=z_counter,
+                        )
+                    )
+                    z_counter += 1
+                except Exception:
+                    if debug_layout:
+                        print(f"warn: failed to render background for page {page_no}")
                     bg_pix = page.get_pixmap()
                     images_store[bg_ref] = bg_pix.tobytes("png")
                     elements.append(
@@ -149,17 +175,14 @@ def extract_document(
                         )
                     )
                     z_counter += 1
-                except Exception:
-                    if debug_layout:
-                        print(f"warn: failed to render background for page {page_no}")
+                    ocr_boxes = ocr_page_if_needed(
+                        page=page,
+                        languages=ocr_lang,
+                        deskew=deskew,
+                        debug=debug_layout,
+                        engine=ocr_engine,
+                    )
 
-                ocr_boxes = ocr_page_if_needed(
-                    page=page,
-                    languages=ocr_lang,
-                    deskew=deskew,
-                    debug=debug_layout,
-                    engine=ocr_engine,
-                )
                 for tb in ocr_boxes:
                     tb.z_index = z_counter
                     tb.is_ocr = True
