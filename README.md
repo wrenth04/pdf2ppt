@@ -65,7 +65,7 @@ The default mode is `auto`, which prefers the local AI backend and falls back to
 pip install simple-lama-inpainting Pillow
 ```
 
-The cleanup mask now covers OCR text regions more aggressively so the filled background looks continuous instead of leaving flat color blocks. The bottom-right `notebooklm` watermark is removed from the background image, but it is not added as editable PPTX text.
+The cleanup mask now covers OCR text regions more aggressively so the filled background looks continuous instead of leaving flat color blocks. OCR text boxes themselves are transparent, so they no longer draw a colored rectangle behind the text. The bottom-right `notebooklm` watermark is removed from the background image, but it is not added as editable PPTX text.
 
 ## Python dependencies
 

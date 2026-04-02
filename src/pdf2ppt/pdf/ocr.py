@@ -319,7 +319,6 @@ def _build_ocr_textbox(
     height_pt = max(rect_pt.y1 - rect_pt.y0, 1.0)
     font_size = max(height_pt * 0.88, 8)
     color_hex = _bgr_to_hex(_sample_color_bgr(image, rect_px))
-    bg_hex = _bgr_to_hex(_sample_background_color_bgr(image, rect_px))
     is_bold = _estimate_bold(image, rect_px)
     run = TextRun(
         text=text.lstrip("\n"),
@@ -335,8 +334,8 @@ def _build_ocr_textbox(
         paragraphs=[para],
         z_index=0,
         is_ocr=True,
-        fill_color=bg_hex,
-        stroke_color=bg_hex,
+        fill_color=None,
+        stroke_color=None,
     )
     if _estimate_background_variance(image, rect_px) > 1500.0:
         box.fill_color = None
@@ -459,7 +458,6 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
         height_pt = max(rect_pt.y1 - rect_pt.y0, 1.0)
         font_size = max(height_pt * 0.88, 8)
         color_hex = _bgr_to_hex(_sample_color_bgr(image, rect_px))
-        bg_hex = _bgr_to_hex(_sample_background_color_bgr(image, rect_px))
         is_bold = _estimate_bold(image, rect_px)
         run = TextRun(
             text=text.lstrip("\n"),
@@ -475,8 +473,8 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
             paragraphs=[para],
             z_index=0,
             is_ocr=True,
-            fill_color=bg_hex,
-            stroke_color=bg_hex,
+            fill_color=None,
+            stroke_color=None,
         )
         if _estimate_background_variance(image, rect_px) > 1500.0:
             box.fill_color = None
