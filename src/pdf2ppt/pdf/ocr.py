@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import List, Tuple
+import re
 
 import cv2
 import numpy as np
@@ -23,6 +24,13 @@ try:
     _SIMPLE_LAMA_AVAILABLE = True
 except Exception:
     _SIMPLE_LAMA_AVAILABLE = False
+
+try:
+    import torch  # type: ignore
+    from diffusers import AutoPipelineForInpainting  # type: ignore
+    _DIFFUSERS_AVAILABLE = True
+except Exception:
+    _DIFFUSERS_AVAILABLE = False
 
 
 def _clip_rect(rect: Rect, width: int, height: int) -> Rect:
@@ -112,6 +120,20 @@ def _sample_background_color_bgr(image: np.ndarray, rect_px: Rect, band_px: int 
 def _bgr_to_hex(bgr: Tuple[int, int, int]) -> str:
     b, g, r = bgr
     return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _normalize_ocr_text(text: str) -> str:
+    return re.sub(r"[^0-9a-z]+", "", text.lower().strip())
+
+
+def _is_notebooklm_watermark(image: np.ndarray, rect_px: Rect, text: str) -> bool:
+    if _normalize_ocr_text(text) != "notebooklm":
+        return False
+    h, w = image.shape[:2]
+    r = _clip_rect(rect_px, w, h)
+    center_x = (r.x0 + r.x1) / 2.0
+    center_y = (r.y0 + r.y1) / 2.0
+    return center_x >= w * 0.75 and center_y >= h * 0.75
 
 
 def _estimate_bold(image: np.ndarray, rect_px: Rect, ratio_threshold: float = 0.35) -> bool:
@@ -330,6 +352,22 @@ def _simple_lama_model():
     return SimpleLama()
 
 
+@lru_cache(maxsize=1)
+def _diffusers_inpaint_model():
+    if not _DIFFUSERS_AVAILABLE:
+        return None
+    model_id = "stabilityai/stable-diffusion-2-inpainting"
+    pipe = AutoPipelineForInpainting.from_pretrained(
+        model_id,
+        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        safety_checker=None,
+        requires_safety_checker=False,
+    )
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    pipe = pipe.to(device)
+    return pipe
+
+
 def _run_simple_lama_inpaint(image: np.ndarray, mask: np.ndarray) -> np.ndarray | None:
     model = _simple_lama_model()
     if model is None:
@@ -343,6 +381,52 @@ def _run_simple_lama_inpaint(image: np.ndarray, mask: np.ndarray) -> np.ndarray 
     if result_arr.ndim != 3 or result_arr.shape[:2] != image.shape[:2]:
         return None
     return cv2.cvtColor(result_arr, cv2.COLOR_RGB2BGR)
+
+
+def _run_diffusers_inpaint(image: np.ndarray, mask: np.ndarray) -> np.ndarray | None:
+    pipe = _diffusers_inpaint_model()
+    if pipe is None:
+        return None
+    if mask.max() == 0:
+        return image
+    pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    pil_mask = Image.fromarray(mask)
+    try:
+        generator = None
+        if torch.cuda.is_available():
+            generator = torch.Generator(device="cuda").manual_seed(0)
+        result = pipe(
+            prompt="",
+            image=pil_image,
+            mask_image=pil_mask,
+            guidance_scale=1.0,
+            num_inference_steps=25,
+            generator=generator,
+        ).images[0]
+    except Exception:
+        return None
+    result_arr = np.array(result)
+    if result_arr.ndim != 3 or result_arr.shape[:2] != image.shape[:2]:
+        return None
+    return cv2.cvtColor(result_arr, cv2.COLOR_RGB2BGR)
+
+
+def _run_inpaint_backend(image: np.ndarray, mask: np.ndarray, backend: str) -> np.ndarray | None:
+    backend = backend.lower().strip()
+    if mask.max() == 0:
+        return image
+    if backend == "telea":
+        return cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
+    attempts = []
+    if backend in {"auto", "heavy"}:
+        attempts.append(_run_diffusers_inpaint)
+    if backend == "auto":
+        attempts.append(_run_simple_lama_inpaint)
+    for attempt in attempts:
+        cleaned = attempt(image, mask)
+        if cleaned is not None:
+            return cleaned
+    return cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
 
 
 def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = False, engine: str = "paddle") -> List[TextBox]:
@@ -366,6 +450,8 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
 
     boxes: List[TextBox] = []
     for rect_px, text, conf in raw_boxes:
+        if _is_notebooklm_watermark(image, rect_px, text):
+            continue
         pad_y = max(int((rect_px.y1 - rect_px.y0) * 0.12), 2)
         pad_x = max(int((rect_px.y1 - rect_px.y0) * 0.05), 1)
         rect_mask_px = _inflate_rect(rect_px, pad_x, pad_y, image.shape[1], image.shape[0])
@@ -403,7 +489,7 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
     return boxes
 
 
-def clean_page_background(page, languages: str, deskew: bool = True, engine: str = "paddle", use_ai: bool = True) -> tuple[List[TextBox], np.ndarray]:
+def clean_page_background(page, languages: str, deskew: bool = True, engine: str = "paddle", inpaint_backend: str = "auto") -> tuple[List[TextBox], np.ndarray]:
     pix = page.get_pixmap()
     buf = np.frombuffer(pix.samples, dtype=np.uint8)
     if pix.n == 4:
@@ -428,27 +514,19 @@ def clean_page_background(page, languages: str, deskew: bool = True, engine: str
     for rect_px, text, conf in raw_boxes:
         if conf < 0:
             continue
-        pad_y = max(int((rect_px.y1 - rect_px.y0) * 0.02), 0)
-        pad_x = max(int((rect_px.x1 - rect_px.x0) * 0.02), 0)
-        box, rect_mask_px, variance = _build_ocr_textbox(image, page, rect_px, text, conf, pad_x, pad_y)
-        boxes.append(box)
+        is_watermark = _is_notebooklm_watermark(image, rect_px, text)
+        pad_y = max(int((rect_px.y1 - rect_px.y0) * 0.10), 2)
+        pad_x = max(int((rect_px.x1 - rect_px.x0) * 0.08), 2)
+        box, rect_mask_px, _ = _build_ocr_textbox(image, page, rect_px, text, conf, pad_x, pad_y)
+        if not is_watermark:
+            boxes.append(box)
         x0, y0, x1, y1 = map(int, (rect_mask_px.x0, rect_mask_px.y0, rect_mask_px.x1, rect_mask_px.y1))
         if x1 <= x0 or y1 <= y0:
             continue
-        if variance > 1500.0 and float(conf) >= 35:
-            mask[y0:y1, x0:x1] = 255
-        else:
-            cleaned_color = _sample_background_color_bgr(image, rect_px)
-            cleaned_patch = np.empty((y1 - y0, x1 - x0, 3), dtype=np.uint8)
-            cleaned_patch[:, :] = cleaned_color
-            image[y0:y1, x0:x1] = cleaned_patch
+        mask[y0:y1, x0:x1] = 255
 
-    cleaned_image = None
-    cleaned_image = None
-    if use_ai:
-        cleaned_image = _run_simple_lama_inpaint(image, mask)
-    if cleaned_image is None and mask.any():
-        cleaned_image = cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
+    mask = cv2.dilate(mask, np.ones((5, 5), np.uint8), iterations=1)
+    cleaned_image = _run_inpaint_backend(image, mask, inpaint_backend)
     if cleaned_image is None:
         cleaned_image = image
     return boxes, cleaned_image

@@ -53,13 +53,19 @@ PaddleOCR model files are cached under `~/.paddlex/official_models/` (for exampl
 
 ### Optional AI background cleanup
 
-The image-only page path can use a mask-guided AI inpainting model to remove baked-in text from the raster background before inserting it into PPTX.
+The image-only page path can use a mask-guided inpainting backend to remove baked-in text from the raster background before inserting it into PPTX.
+
+The default mode is `auto`, which prefers the local AI backend and falls back to OpenCV inpainting if needed. You can also force a backend with `--ocr-inpaint-backend`:
+
+- `auto` — prefer the AI backend, then fall back to OpenCV
+- `heavy` — force the stronger local AI backend
+- `telea` — force OpenCV inpainting
 
 ```bash
 pip install simple-lama-inpainting Pillow
 ```
 
-The current implementation uses the OCR boxes as the inpainting mask and falls back to OpenCV inpainting if the AI backend is unavailable.
+The cleanup mask now covers OCR text regions more aggressively so the filled background looks continuous instead of leaving flat color blocks. The bottom-right `notebooklm` watermark is removed from the background image, but it is not added as editable PPTX text.
 
 ## Python dependencies
 
@@ -91,6 +97,7 @@ Core Python packages used by this project:
 - `opencv-python`
 - `lxml`
 - `numpy`
+- `diffusers` / `torch` for the heavier AI inpainting backend
 
 ## Usage
 
@@ -103,6 +110,7 @@ Common options:
 ```bash
 pdf2ppt input.pdf output.pptx --ocr auto --ocr-engine paddle --deskew true
 pdf2ppt input.pdf output.pptx --pages 1-3,5
+pdf2ppt input.pdf output.pptx --ocr auto --ocr-engine paddle --ocr-inpaint-backend heavy
 pdf2ppt input.pdf output.pptx --debug-layout
 ```
 

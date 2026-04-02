@@ -18,6 +18,7 @@ def main(
     ocr_lang: str = typer.Option("eng+jpn+chi_sim+chi_tra", help="Tesseract languages"),
     ocr_engine: str = typer.Option("paddle", help="paddle|hocr|tesseract (paddle recommended)"),
     deskew: bool = typer.Option(True, help="Auto-detect rotation/deskew before OCR"),
+    ocr_inpaint_backend: str = typer.Option("auto", help="auto|heavy|telea for background cleanup"),
 ):
     run_pipeline(
         input_pdf=input_pdf,
@@ -32,6 +33,7 @@ def main(
         ocr_lang=ocr_lang,
         ocr_engine=ocr_engine,
         deskew=deskew,
+        inpaint_backend=ocr_inpaint_backend,
     )
 
 

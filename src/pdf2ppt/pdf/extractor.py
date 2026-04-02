@@ -76,6 +76,7 @@ def extract_document(
     ocr_lang: str = "eng+jpn+chi_sim+chi_tra",
     ocr_engine: str = "hocr",
     deskew: bool = True,
+    inpaint_backend: str = "auto",
 ) -> DocumentModel:
     doc = fitz.open(input_pdf)
     page_indices = _parse_pages(pages, doc.page_count)
@@ -139,7 +140,7 @@ def extract_document(
                         languages=ocr_lang,
                         deskew=deskew,
                         engine=ocr_engine,
-                        use_ai=True,
+                        inpaint_backend=inpaint_backend,
                     )
                     images_store[bg_ref] = cv2.imencode(".png", cleaned_image)[1].tobytes()
                     elements.append(

@@ -14,6 +14,7 @@ def run_pipeline(
     ocr_lang: str = "eng+jpn+chi_sim+chi_tra",
     ocr_engine: str = "hocr",
     deskew: bool = True,
+    inpaint_backend: str = "auto",
 ):
     doc = extractor.extract_document(
         input_pdf=input_pdf,
@@ -25,6 +26,7 @@ def run_pipeline(
         ocr_lang=ocr_lang,
         ocr_engine=ocr_engine,
         deskew=deskew,
+        inpaint_backend=inpaint_backend,
     )
     writer.render_pptx(
         document=doc,
