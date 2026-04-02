@@ -1,0 +1,11 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.pptx
+*.pdf
+out.pptx
+out_masked.pptx
+out_paddle_fixed.pptx
+test1.pdf
