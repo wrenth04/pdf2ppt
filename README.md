@@ -2,6 +2,8 @@
 
 Convert PDF files with mixed text and images into editable PPTX slides while preserving layout as much as possible.
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/wrenth04/pdf2ppt/blob/main/notebooks/pdf2ppt_colab.ipynb)
+
 ## Features
 
 - Extract text and images from PDFs
@@ -66,6 +68,16 @@ pip install simple-lama-inpainting Pillow
 ```
 
 The cleanup mask now covers OCR text regions more aggressively so the filled background looks continuous instead of leaving flat color blocks. OCR text boxes themselves are transparent, so they no longer draw a colored rectangle behind the text. The bottom-right `notebooklm` watermark is removed from the background image, but it is not added as editable PPTX text.
+
+## Google Colab
+
+Open the notebook above in Colab to upload a PDF or image, run the converter, and download a PPTX without a local install.
+
+The notebook uses a lighter runtime path by default:
+
+- `ocr_engine=tesseract`
+- `ocr_inpaint_backend=telea`
+- `pages` only works for PDF input
 
 ## Python dependencies
 
