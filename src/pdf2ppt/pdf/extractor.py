@@ -86,9 +86,12 @@ def extract_document(
     for page_no in page_indices:
         page = doc[page_no]
         width, height = page.rect.width, page.rect.height
+        page_area = max(width * height, 1.0)
         elements = []
         text_boxes = []
         z_counter = 0
+        failed_dominant_image = False
+        successful_large_image = False
 
         raw = page.get_text("rawdict")
         for block in raw.get("blocks", []):
@@ -100,6 +103,8 @@ def extract_document(
             elif btype == 1 and "image" in block:
                 xref = block.get("xref")
                 bbox = Rect(*block.get("bbox", [0, 0, 0, 0]))
+                block_area = max((bbox.x1 - bbox.x0) * (bbox.y1 - bbox.y0), 0.0)
+                is_dominant = block_area / page_area >= 0.75
                 ref = f"p{page_no}_xref{xref}"
                 try:
                     img = doc.extract_image(xref)
@@ -117,13 +122,80 @@ def extract_document(
                             z_index=z_counter,
                         )
                     )
+                    successful_large_image = successful_large_image or is_dominant
                     z_counter += 1
                 except Exception:
                     if debug_layout:
                         print(f"warn: failed to extract image xref {xref} on page {page_no}")
+                    failed_dominant_image = failed_dominant_image or is_dominant
                     continue
 
-        if text_boxes:
+        needs_rendered_background = failed_dominant_image and not successful_large_image
+
+        if needs_rendered_background:
+            bg_ref = f"p{page_no}_bg"
+            try:
+                ocr_boxes, cleaned_image = clean_page_background(
+                    page=page,
+                    languages=ocr_lang,
+                    deskew=deskew,
+                    engine=ocr_engine,
+                    inpaint_backend=inpaint_backend,
+                )
+                images_store[bg_ref] = cv2.imencode(".png", cleaned_image)[1].tobytes()
+                elements.insert(
+                    0,
+                    ImageElement(
+                        bbox=Rect(0, 0, width, height),
+                        image_ref=bg_ref,
+                        mime_type="png",
+                        pixel_width=cleaned_image.shape[1],
+                        pixel_height=cleaned_image.shape[0],
+                        transform=None,
+                        alpha=True,
+                        rotation=0.0,
+                        z_index=-1,
+                    ),
+                )
+            except Exception:
+                if debug_layout:
+                    print(f"warn: failed to render background for page {page_no}")
+                bg_pix = page.get_pixmap()
+                images_store[bg_ref] = bg_pix.tobytes("png")
+                elements.insert(
+                    0,
+                    ImageElement(
+                        bbox=Rect(0, 0, width, height),
+                        image_ref=bg_ref,
+                        mime_type="png",
+                        pixel_width=bg_pix.width,
+                        pixel_height=bg_pix.height,
+                        transform=None,
+                        alpha=True,
+                        rotation=0.0,
+                        z_index=-1,
+                    ),
+                )
+                ocr_boxes = ocr_page_if_needed(
+                    page=page,
+                    languages=ocr_lang,
+                    deskew=deskew,
+                    debug=debug_layout,
+                    engine=ocr_engine,
+                )
+
+            if text_boxes:
+                if textbox_merge == "on":
+                    elements.extend(group_textboxes(text_boxes))
+                else:
+                    elements.extend(text_boxes)
+            else:
+                for tb in ocr_boxes:
+                    tb.is_ocr = True
+                    tb.z_index = z_counter
+                    z_counter += 1
+                elements.extend(ocr_boxes)
+        elif text_boxes:
             if textbox_merge == "on":
                 merged = group_textboxes(text_boxes)
                 elements.extend(merged)
