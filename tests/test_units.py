@@ -129,7 +129,16 @@ def test_extract_document_raster_fallback_for_dominant_failed_image(monkeypatch)
     monkeypatch.setattr(extractor.fitz, "open", lambda path: FakeDoc())
 
     cleaned = np.zeros((100, 100, 3), dtype=np.uint8)
-    ocr_boxes = [TextBox(bbox=Rect(1, 1, 5, 5), paragraphs=[], z_index=0)]
+    ocr_boxes = [
+        TextBox(
+            bbox=Rect(1, 1, 5, 5),
+            paragraphs=[
+                extractor.Paragraph(runs=[extractor.TextRun(text="OCR text", font_family="Arial", font_size_pt=10)]),
+            ],
+            z_index=0,
+            is_ocr=True,
+        )
+    ]
     monkeypatch.setattr(extractor, "clean_page_background", lambda **kwargs: (ocr_boxes, cleaned))
 
     doc = extractor.extract_document("dummy.pdf")
@@ -138,4 +147,11 @@ def test_extract_document_raster_fallback_for_dominant_failed_image(monkeypatch)
     page = doc.pages[0]
     assert any(isinstance(el, ImageElement) and el.bbox == Rect(0, 0, 100, 100) for el in page.elements)
     assert any(isinstance(el, TextBox) and el.paragraphs[0].runs[0].text == "Footer" for el in page.elements)
-    assert not any(getattr(el, "is_ocr", False) for el in page.elements if isinstance(el, TextBox) and el.paragraphs and el.paragraphs[0].runs)
+    assert any(
+        isinstance(el, TextBox)
+        and getattr(el, "is_ocr", False)
+        and el.paragraphs
+        and el.paragraphs[0].runs
+        and el.paragraphs[0].runs[0].text == "OCR text"
+        for el in page.elements
+    )

@@ -189,6 +189,11 @@ def extract_document(
                     elements.extend(group_textboxes(text_boxes))
                 else:
                     elements.extend(text_boxes)
+                for tb in ocr_boxes:
+                    tb.is_ocr = True
+                    tb.z_index = z_counter
+                    z_counter += 1
+                elements.extend(ocr_boxes)
             else:
                 for tb in ocr_boxes:
                     tb.is_ocr = True
