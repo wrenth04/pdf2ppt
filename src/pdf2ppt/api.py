@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
-app = FastAPI(title="pdf2ppt API", version="0.1.0")
+app = FastAPI(title="pdf2ppt API", version="1.0.0")
 _convert_lock = Lock()
 run_pipeline = None
 
