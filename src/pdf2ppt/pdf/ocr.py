@@ -307,7 +307,8 @@ def _detect_raw_boxes(image: np.ndarray, languages: str, engine: str) -> List[Tu
 
 def _build_ocr_textbox(
     image: np.ndarray,
-    page,
+    page_width_pt: float,
+    page_height_pt: float,
     rect_px: Rect,
     text: str,
     conf: float,
@@ -315,7 +316,7 @@ def _build_ocr_textbox(
     pad_y: int,
 ) -> tuple[TextBox, Rect, float]:
     rect_mask_px = _inflate_rect(rect_px, pad_x, pad_y, image.shape[1], image.shape[0])
-    rect_pt = _px_rect_to_pdf(rect_px, page.rect.width, page.rect.height, image.shape[1], image.shape[0])
+    rect_pt = _px_rect_to_pdf(rect_mask_px, page_width_pt, page_height_pt, image.shape[1], image.shape[0])
     height_pt = max(rect_pt.y1 - rect_pt.y0, 1.0)
     font_size = max(height_pt * 0.88, 8)
     color_hex = _bgr_to_hex(_sample_color_bgr(image, rect_px))
@@ -428,20 +429,15 @@ def _run_inpaint_backend(image: np.ndarray, mask: np.ndarray, backend: str) -> n
     return cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
 
 
-def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = False, engine: str = "paddle") -> List[TextBox]:
-    pix = page.get_pixmap()
-    buf = np.frombuffer(pix.samples, dtype=np.uint8)
-    if pix.n == 4:
-        image = buf.reshape(pix.height, pix.width, 4)
-        image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
-    elif pix.n == 3:
-        image = buf.reshape(pix.height, pix.width, 3)
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    elif pix.n == 1:
-        image = buf.reshape(pix.height, pix.width)
-        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    else:
-        image = buf.reshape(pix.height, pix.width, pix.n)
+def ocr_image(
+    image: np.ndarray,
+    page_width_pt: float,
+    page_height_pt: float,
+    languages: str,
+    deskew: bool = True,
+    debug: bool = False,
+    engine: str = "paddle",
+) -> List[TextBox]:
     if deskew and engine != "paddle":  # paddle 有 angle_cls，本身可矯正
         image = _deskew_image(image)
 
@@ -454,7 +450,7 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
         pad_y = max(int((rect_px.y1 - rect_px.y0) * 0.12), 2)
         pad_x = max(int((rect_px.y1 - rect_px.y0) * 0.05), 1)
         rect_mask_px = _inflate_rect(rect_px, pad_x, pad_y, image.shape[1], image.shape[0])
-        rect_pt = _px_rect_to_pdf(rect_mask_px, page.rect.width, page.rect.height, image.shape[1], image.shape[0])
+        rect_pt = _px_rect_to_pdf(rect_mask_px, page_width_pt, page_height_pt, image.shape[1], image.shape[0])
         height_pt = max(rect_pt.y1 - rect_pt.y0, 1.0)
         font_size = max(height_pt * 0.88, 8)
         color_hex = _bgr_to_hex(_sample_color_bgr(image, rect_px))
@@ -483,8 +479,74 @@ def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = 
         boxes.append(box)
 
     if debug:
+        print(f"ocr: detected {len(boxes)} boxes using {engine}")
+    return boxes
+
+
+def ocr_page_if_needed(page, languages: str, deskew: bool = True, debug: bool = False, engine: str = "paddle") -> List[TextBox]:
+    pix = page.get_pixmap()
+    buf = np.frombuffer(pix.samples, dtype=np.uint8)
+    if pix.n == 4:
+        image = buf.reshape(pix.height, pix.width, 4)
+        image = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
+    elif pix.n == 3:
+        image = buf.reshape(pix.height, pix.width, 3)
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    elif pix.n == 1:
+        image = buf.reshape(pix.height, pix.width)
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    else:
+        image = buf.reshape(pix.height, pix.width, pix.n)
+    boxes = ocr_image(
+        image=image,
+        page_width_pt=page.rect.width,
+        page_height_pt=page.rect.height,
+        languages=languages,
+        deskew=deskew,
+        debug=debug,
+        engine=engine,
+    )
+    if debug:
         print(f"ocr: detected {len(boxes)} boxes on page {page.number} using {engine}")
     return boxes
+
+
+def clean_image_background(
+    image: np.ndarray,
+    page_width_pt: float,
+    page_height_pt: float,
+    languages: str,
+    deskew: bool = True,
+    engine: str = "paddle",
+    inpaint_backend: str = "auto",
+) -> tuple[List[TextBox], np.ndarray]:
+    if deskew and engine != "paddle":
+        image = _deskew_image(image)
+    image = image.copy()
+
+    raw_boxes = _detect_raw_boxes(image, languages, engine)
+
+    mask = np.zeros(image.shape[:2], dtype=np.uint8)
+    boxes: List[TextBox] = []
+    for rect_px, text, conf in raw_boxes:
+        if conf < 0:
+            continue
+        is_watermark = _is_notebooklm_watermark(image, rect_px, text)
+        pad_y = max(int((rect_px.y1 - rect_px.y0) * 0.10), 2)
+        pad_x = max(int((rect_px.x1 - rect_px.x0) * 0.08), 2)
+        box, rect_mask_px, _ = _build_ocr_textbox(image, page_width_pt, page_height_pt, rect_px, text, conf, pad_x, pad_y)
+        if not is_watermark:
+            boxes.append(box)
+        x0, y0, x1, y1 = map(int, (rect_mask_px.x0, rect_mask_px.y0, rect_mask_px.x1, rect_mask_px.y1))
+        if x1 <= x0 or y1 <= y0:
+            continue
+        mask[y0:y1, x0:x1] = 255
+
+    mask = cv2.dilate(mask, np.ones((5, 5), np.uint8), iterations=1)
+    cleaned_image = _run_inpaint_backend(image, mask, inpaint_backend)
+    if cleaned_image is None:
+        cleaned_image = image
+    return boxes, cleaned_image
 
 
 def clean_page_background(page, languages: str, deskew: bool = True, engine: str = "paddle", inpaint_backend: str = "auto") -> tuple[List[TextBox], np.ndarray]:
@@ -501,30 +563,12 @@ def clean_page_background(page, languages: str, deskew: bool = True, engine: str
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     else:
         image = buf.reshape(pix.height, pix.width, pix.n)
-    if deskew and engine != "paddle":
-        image = _deskew_image(image)
-    image = image.copy()
-
-    raw_boxes = _detect_raw_boxes(image, languages, engine)
-
-    mask = np.zeros(image.shape[:2], dtype=np.uint8)
-    boxes: List[TextBox] = []
-    for rect_px, text, conf in raw_boxes:
-        if conf < 0:
-            continue
-        is_watermark = _is_notebooklm_watermark(image, rect_px, text)
-        pad_y = max(int((rect_px.y1 - rect_px.y0) * 0.10), 2)
-        pad_x = max(int((rect_px.x1 - rect_px.x0) * 0.08), 2)
-        box, rect_mask_px, _ = _build_ocr_textbox(image, page, rect_px, text, conf, pad_x, pad_y)
-        if not is_watermark:
-            boxes.append(box)
-        x0, y0, x1, y1 = map(int, (rect_mask_px.x0, rect_mask_px.y0, rect_mask_px.x1, rect_mask_px.y1))
-        if x1 <= x0 or y1 <= y0:
-            continue
-        mask[y0:y1, x0:x1] = 255
-
-    mask = cv2.dilate(mask, np.ones((5, 5), np.uint8), iterations=1)
-    cleaned_image = _run_inpaint_backend(image, mask, inpaint_backend)
-    if cleaned_image is None:
-        cleaned_image = image
-    return boxes, cleaned_image
+    return clean_image_background(
+        image=image,
+        page_width_pt=page.rect.width,
+        page_height_pt=page.rect.height,
+        languages=languages,
+        deskew=deskew,
+        engine=engine,
+        inpaint_backend=inpaint_backend,
+    )

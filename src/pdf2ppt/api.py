@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
-app = FastAPI(title="pdf2ppt API", version="1.0.1")
+app = FastAPI(title="pdf2ppt API", version="1.1.0")
 _convert_lock = Lock()
 run_pipeline = None
 
@@ -22,8 +22,8 @@ def health():
 
 @app.post("/convert")
 async def convert(
-    file: UploadFile = File(..., description="PDF file to convert"),
-    pages: str | None = Form(default="", description="Pages to include, e.g. 1-3,5"),
+    file: UploadFile = File(..., description="PDF or image file to convert"),
+    pages: str | None = Form(default="", description="Pages to include, e.g. 1-3,5 (PDF only)"),
     debug_layout: bool = Form(False, description="Enable verbose layout debug logs"),
     image_mode: Literal["auto", "extract", "rasterize-page"] = Form(
         "auto",
@@ -53,15 +53,15 @@ async def convert(
     ),
 ):
     if not _convert_lock.acquire(blocking=False):
-        raise HTTPException(status_code=429, detail="Only one PDF can be converted at a time")
+        raise HTTPException(status_code=429, detail="Only one file can be converted at a time")
 
     temp_dir = Path(tempfile.mkdtemp(prefix="pdf2ppt-"))
     input_path = temp_dir / (Path(file.filename or "input.pdf").name or "input.pdf")
     output_path = temp_dir / "output.pptx"
 
     try:
-        if file.content_type not in {"application/pdf", "application/octet-stream"}:
-            raise HTTPException(status_code=400, detail="Uploaded file must be a PDF")
+        if file.content_type not in {"application/pdf", "application/octet-stream", "image/png", "image/jpeg"}:
+            raise HTTPException(status_code=400, detail="Uploaded file must be a PDF or image")
 
         with input_path.open("wb") as dst:
             shutil.copyfileobj(file.file, dst)
@@ -78,9 +78,12 @@ async def convert(
         if normalized_pages == "":
             normalized_pages = None
 
+        if input_path.suffix.lower() != ".pdf" and normalized_pages:
+            raise HTTPException(status_code=400, detail="pages is only supported for PDF input")
+
         await run_in_threadpool(
             run_pipeline,
-            input_pdf=str(input_path),
+            input_path=str(input_path),
             output_pptx=str(output_path),
             pages=normalized_pages,
             font_map=None,

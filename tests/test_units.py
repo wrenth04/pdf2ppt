@@ -1,4 +1,5 @@
 import numpy as np
+from PIL import Image
 
 from pdf2ppt.model.elements import ImageElement, Rect, TextBox
 from pdf2ppt.pdf import ocr
@@ -66,6 +67,52 @@ def test_clean_page_background_masks_notebooklm_but_excludes_text(monkeypatch):
     mask = captured["mask"]
     assert mask[85:96, 85:96].any()
     assert mask[12:28, 12:28].any()
+
+
+def test_build_ocr_textbox_uses_inflated_bbox():
+    image = np.zeros((100, 100, 3), dtype=np.uint8)
+    box, rect_mask_px, _ = ocr._build_ocr_textbox(
+        image=image,
+        page_width_pt=100,
+        page_height_pt=100,
+        rect_px=Rect(10, 10, 20, 20),
+        text="Hello",
+        conf=99.0,
+        pad_x=4,
+        pad_y=2,
+    )
+
+    assert box.bbox.x1 - box.bbox.x0 == rect_mask_px.x1 - rect_mask_px.x0
+    assert box.bbox.x1 - box.bbox.x0 > 10
+
+
+def test_extract_image_document_builds_editable_text(monkeypatch, tmp_path):
+    image_path = tmp_path / "sample.png"
+    image = Image.new("RGB", (100, 60), "white")
+    image.save(image_path)
+
+    from pdf2ppt.image import extractor as image_extractor
+
+    cleaned = np.zeros((60, 100, 3), dtype=np.uint8)
+    ocr_boxes = [
+        TextBox(
+            bbox=Rect(10, 10, 30, 30),
+            paragraphs=[
+                extractor.Paragraph(runs=[extractor.TextRun(text="Hello", font_family="Arial", font_size_pt=10)]),
+            ],
+            z_index=0,
+            is_ocr=True,
+        )
+    ]
+
+    monkeypatch.setattr(image_extractor, "clean_image_background", lambda **kwargs: (ocr_boxes, cleaned))
+
+    doc = image_extractor.extract_document(str(image_path))
+
+    assert len(doc.pages) == 1
+    page = doc.pages[0]
+    assert any(isinstance(el, ImageElement) and el.bbox == Rect(0, 0, 100.0, 60.0) for el in page.elements)
+    assert any(isinstance(el, TextBox) and el.paragraphs[0].runs[0].text == "Hello" for el in page.elements)
 
 
 def test_extract_document_raster_fallback_for_dominant_failed_image(monkeypatch):

@@ -1,14 +1,14 @@
 import typer
 from .pipeline import run_pipeline
 
-app = typer.Typer(add_completion=False, help="Convert PDF to editable PPTX with optional OCR")
+app = typer.Typer(add_completion=False, help="Convert PDF or image to editable PPTX with optional OCR")
 
 
 @app.command()
 def main(
-    input_pdf: str = typer.Argument(..., help="Path to input PDF"),
+    input_path: str = typer.Argument(..., help="Path to input PDF or image"),
     output_pptx: str = typer.Argument(..., help="Path to output PPTX"),
-    pages: str = typer.Option(None, help="Pages to include, e.g., 1-3,5"),
+    pages: str = typer.Option(None, help="Pages to include, e.g., 1-3,5 (PDF only)"),
     font_map: str = typer.Option(None, help="Path to font map JSON"),
     debug_layout: bool = typer.Option(False, help="Enable verbose layout debug logs"),
     image_mode: str = typer.Option("auto", help="auto|extract|rasterize-page"),
@@ -21,7 +21,7 @@ def main(
     ocr_inpaint_backend: str = typer.Option("telea", help="auto|heavy|telea for background cleanup"),
 ):
     run_pipeline(
-        input_pdf=input_pdf,
+        input_path=input_path,
         output_pptx=output_pptx,
         pages=pages,
         font_map=font_map,
