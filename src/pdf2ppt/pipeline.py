@@ -8,13 +8,13 @@ def run_pipeline(
     font_map: str | None = None,
     debug_layout: bool = False,
     image_mode: str = "auto",
-    textbox_merge: str = "on",
+    textbox_merge: str = "off",
     strict: bool = False,
-    ocr: str = "auto",
+    ocr: str = "on",
     ocr_lang: str = "eng+jpn+chi_sim+chi_tra",
-    ocr_engine: str = "hocr",
+    ocr_engine: str = "paddle",
     deskew: bool = True,
-    inpaint_backend: str = "auto",
+    inpaint_backend: str = "telea",
 ):
     doc = extractor.extract_document(
         input_pdf=input_pdf,

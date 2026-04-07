@@ -14,7 +14,7 @@ from ..model.elements import (
     TextRun,
 )
 from ..model.normalize import font_fallback, normalize_font_name
-from ..model.grouping import merge_spans_into_lines
+from ..model.grouping import group_textboxes
 from .ocr import clean_page_background, ocr_page_if_needed
 
 __all__ = ["extract_document", "_parse_pages"]
@@ -72,9 +72,9 @@ def extract_document(
     debug_layout: bool = False,
     image_mode: str = "auto",
     textbox_merge: str = "off",
-    ocr: str = "auto",
+    ocr: str = "on",
     ocr_lang: str = "eng+jpn+chi_sim+chi_tra",
-    ocr_engine: str = "hocr",
+    ocr_engine: str = "paddle",
     deskew: bool = True,
     inpaint_backend: str = "auto",
 ) -> DocumentModel:

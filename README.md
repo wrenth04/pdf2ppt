@@ -108,16 +108,67 @@ pdf2ppt input.pdf output.pptx
 Common options:
 
 ```bash
-pdf2ppt input.pdf output.pptx --ocr auto --ocr-engine paddle --deskew true
+pdf2ppt input.pdf output.pptx --ocr on --ocr-engine paddle --deskew true
 pdf2ppt input.pdf output.pptx --pages 1-3,5
-pdf2ppt input.pdf output.pptx --ocr auto --ocr-engine paddle --ocr-inpaint-backend heavy
+pdf2ppt input.pdf output.pptx --ocr on --ocr-engine paddle --ocr-inpaint-backend heavy
 pdf2ppt input.pdf output.pptx --debug-layout
 ```
 
 To convert a full PDF in the current directory:
 
 ```bash
-PYTHONPATH=/project/pdf2ppt/src /project/pdf2ppt/.venv/bin/python -m pdf2ppt.cli input.pdf out.pptx --ocr auto --ocr-engine paddle
+PYTHONPATH=/project/pdf2ppt/src /project/pdf2ppt/.venv/bin/python -m pdf2ppt.cli input.pdf out.pptx --ocr on --ocr-engine paddle
+```
+
+## REST API
+
+Start the API server with Uvicorn:
+
+```bash
+PYTHONPATH=src .venv/bin/uvicorn pdf2ppt.api:app --reload
+```
+
+Open Swagger UI in your browser:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Available endpoints:
+
+- `GET /health` — health check
+- `POST /convert` — upload a PDF and download the converted PPTX
+
+`POST /convert` form fields:
+
+- `file` — PDF file upload
+- `pages` — page selection string, e.g. `1-3,5`
+- `debug_layout` — `true` or `false`
+- `image_mode` — `auto`, `extract`, or `rasterize-page`
+- `textbox_merge` — `on` or `off`
+- `strict` — `true` or `false`
+- `ocr` — `off`, `on`, or `auto`
+- `ocr_lang` — OCR languages, e.g. `eng+jpn+chi_sim+chi_tra`
+- `ocr_engine` — `paddle`, `hocr`, or `tesseract`
+- `deskew` — `true` or `false`
+- `ocr_inpaint_backend` — `auto`, `heavy`, or `telea` (default: `telea` for both CLI and API)
+
+The API allows only one active conversion at a time. If another PDF is already being processed, `POST /convert` returns `429 Too Many Requests`.
+
+Default API OCR settings:
+
+- `ocr=on`
+- `ocr_engine=paddle`
+
+Example request with `curl`:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/convert" \
+  -F "file=@input.pdf;type=application/pdf" \
+  -F "pages=1-2" \
+  -F "ocr=on" \
+  -F "ocr_engine=paddle" \
+  --output output.pptx
 ```
 
 ## Notes

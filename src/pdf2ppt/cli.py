@@ -14,11 +14,11 @@ def main(
     image_mode: str = typer.Option("auto", help="auto|extract|rasterize-page"),
     textbox_merge: str = typer.Option("off", help="on|off for textbox merge heuristics"),
     strict: bool = typer.Option(False, help="Fail on unsupported content instead of degrading"),
-    ocr: str = typer.Option("auto", help="off|on|auto for OCR"),
+    ocr: str = typer.Option("on", help="off|on|auto for OCR"),
     ocr_lang: str = typer.Option("eng+jpn+chi_sim+chi_tra", help="Tesseract languages"),
     ocr_engine: str = typer.Option("paddle", help="paddle|hocr|tesseract (paddle recommended)"),
     deskew: bool = typer.Option(True, help="Auto-detect rotation/deskew before OCR"),
-    ocr_inpaint_backend: str = typer.Option("auto", help="auto|heavy|telea for background cleanup"),
+    ocr_inpaint_backend: str = typer.Option("telea", help="auto|heavy|telea for background cleanup"),
 ):
     run_pipeline(
         input_pdf=input_pdf,
