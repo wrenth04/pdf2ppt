@@ -128,6 +128,19 @@ Start the API server with Uvicorn:
 PYTHONPATH=src .venv/bin/uvicorn pdf2ppt.api:app --reload
 ```
 
+Or run it in Docker:
+
+```bash
+docker build -t pdf2ppt .
+docker run --rm -p 8000:8000 pdf2ppt
+```
+
+Then open Swagger UI at:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
 Open Swagger UI in your browser:
 
 ```text
