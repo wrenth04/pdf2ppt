@@ -147,6 +147,25 @@ Open Swagger UI in your browser:
 http://127.0.0.1:8000/docs
 ```
 
+### GitHub Release assets
+
+Release tags like `v1.0.0` will build Docker images for `linux/amd64` and `linux/arm64`, then upload compressed archives to the GitHub Release.
+
+If an archive is too large for a single release asset, the workflow will split it into multiple `.part-xxx` files so it stays within GitHub's upload limits.
+
+Download the parts and combine them locally before loading:
+
+```bash
+cat pdf2ppt-v1.0.0-linux-amd64.tar.gz.part-* > pdf2ppt-v1.0.0-linux-amd64.tar.gz
+gunzip -c pdf2ppt-v1.0.0-linux-amd64.tar.gz | docker load
+```
+
+Then run the container:
+
+```bash
+docker run --rm -p 8000:8000 pdf2ppt:v1.0.0-amd64
+```
+
 Available endpoints:
 
 - `GET /health` — health check

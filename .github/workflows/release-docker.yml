@@ -1,0 +1,91 @@
+name: release-docker
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Derive artifact names
+        id: vars
+        shell: bash
+        run: |
+          tag_name="${GITHUB_REF_NAME}"
+          arch="${{ matrix.platform }}"
+          arch="${arch#linux/}"
+          arch="${arch//\//-}"
+          echo "image_name=pdf2ppt:${tag_name}-${arch}" >> "$GITHUB_OUTPUT"
+          echo "tar_name=pdf2ppt-${tag_name}-${arch}.tar" >> "$GITHUB_OUTPUT"
+          echo "asset_name=pdf2ppt-${tag_name}-${arch}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: |
+          docker buildx build \
+            --platform "${{ matrix.platform }}" \
+            --tag "${{ steps.vars.outputs.image_name }}" \
+            --load \
+            .
+
+      - name: Smoke test container
+        run: |
+          docker run -d --rm \
+            --name pdf2ppt-test \
+            -p 8000:8000 \
+            "${{ steps.vars.outputs.image_name }}"
+          trap 'docker stop pdf2ppt-test >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/health
+
+      - name: Export image archive
+        id: export
+        shell: bash
+        run: |
+          docker save "${{ steps.vars.outputs.image_name }}" -o "${{ steps.vars.outputs.tar_name }}"
+          gzip -9 "${{ steps.vars.outputs.tar_name }}"
+          max_bytes=$((1800 * 1024 * 1024))
+          asset="${{ steps.vars.outputs.asset_name }}"
+          if [ "$(stat -c%s "$asset")" -le "$max_bytes" ]; then
+            echo "upload_pattern=$asset" >> "$GITHUB_OUTPUT"
+          else
+            split_prefix="${asset}.part-"
+            split -b 1800m -d -a 3 "$asset" "$split_prefix"
+            rm "$asset"
+            echo "upload_pattern=${asset}.part-*" >> "$GITHUB_OUTPUT"
+          fi
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.export.outputs.upload_pattern }}
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
