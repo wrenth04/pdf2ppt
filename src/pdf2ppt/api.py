@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
-app = FastAPI(title="pdf2ppt API", version="1.0.0")
+app = FastAPI(title="pdf2ppt API", version="1.0.1")
 _convert_lock = Lock()
 run_pipeline = None
 
@@ -23,7 +23,7 @@ def health():
 @app.post("/convert")
 async def convert(
     file: UploadFile = File(..., description="PDF file to convert"),
-    pages: str | None = Form(None, description="Pages to include, e.g. 1-3,5"),
+    pages: str | None = Form(default="", description="Pages to include, e.g. 1-3,5"),
     debug_layout: bool = Form(False, description="Enable verbose layout debug logs"),
     image_mode: Literal["auto", "extract", "rasterize-page"] = Form(
         "auto",
@@ -74,11 +74,15 @@ async def convert(
                 raise HTTPException(status_code=500, detail="Conversion failed") from exc
             run_pipeline = _run_pipeline
 
+        normalized_pages = pages.strip() if pages is not None else None
+        if normalized_pages == "":
+            normalized_pages = None
+
         await run_in_threadpool(
             run_pipeline,
             input_pdf=str(input_path),
             output_pptx=str(output_path),
-            pages=pages,
+            pages=normalized_pages,
             font_map=None,
             debug_layout=debug_layout,
             image_mode=image_mode,

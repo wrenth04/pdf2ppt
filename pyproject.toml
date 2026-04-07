@@ -1,6 +1,6 @@
 [project]
 name = "pdf2ppt"
-version = "1.0.0"
+version = "1.0.1"
 description = "CLI to convert PDF (text/images) to editable PPTX with OCR support"
 authors = [{name = "Your Name", email = "you@example.com"}]
 requires-python = ">=3.10"

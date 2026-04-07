@@ -45,6 +45,49 @@ def test_convert_success(monkeypatch, tmp_path):
     assert captured["ocr_engine"] == "paddle"
 
 
+def test_convert_defaults_pages_to_null(monkeypatch):
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+        Path(kwargs["output_pptx"]).write_bytes(b"pptx-bytes")
+
+    monkeypatch.setattr("pdf2ppt.api.run_pipeline", fake_run_pipeline)
+
+    response = client.post(
+        "/convert",
+        files={"file": ("input.pdf", _pdf_bytes(), "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    assert captured["pages"] is None
+
+
+def test_convert_blank_pages_becomes_null(monkeypatch):
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+        Path(kwargs["output_pptx"]).write_bytes(b"pptx-bytes")
+
+    monkeypatch.setattr("pdf2ppt.api.run_pipeline", fake_run_pipeline)
+
+    response = client.post(
+        "/convert",
+        files={"file": ("input.pdf", _pdf_bytes(), "application/pdf")},
+        data={"pages": ""},
+    )
+
+    assert response.status_code == 200
+    assert captured["pages"] is None
+
+
+def test_convert_openapi_pages_defaults_to_empty_string():
+    schema = app.openapi()
+    pages = schema["components"]["schemas"]["Body_convert_convert_post"]["properties"]["pages"]
+    assert pages.get("default") == ""
+
+
 def test_convert_rejects_second_request(monkeypatch):
     release = threading.Event()
     started = threading.Event()
