@@ -9,6 +9,7 @@ import numpy as np
 import pytesseract
 from lxml import html
 import io
+import hashlib
 from PIL import Image
 
 from ..model.elements import Paragraph, Rect, TextBox, TextRun
@@ -456,11 +457,43 @@ def _run_openai_inpaint(image: np.ndarray, mask: np.ndarray) -> np.ndarray | Non
     import base64
     import os
 
+    model = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-2")
+    prompt = (
+        "Remove only the visible text glyphs covered by the transparent mask. "
+        "Fill each removed glyph by continuing the exact surrounding background pattern, color, gradient, paper texture, noise, and lighting. "
+        "Use nearby pixels around each glyph as the reference for the fill; the filled area must be seamless and must not look like a rectangular patch. "
+        "Do not create boxes, borders, rectangles, outlines, highlights, shadows, or solid-color blocks around the removed text. "
+        "Preserve every non-text element exactly, including existing lines, tables, borders, icons, diagrams, textures, decorations, layout, spacing, and colors. "
+        "If a masked region overlaps a non-text line or shape, keep that line or shape continuous and unchanged while removing only the text strokes. "
+        "Do not add any new text, symbols, logos, objects, labels, or design changes. "
+        "The result should look like the same document page before any text was placed on top of the background."
+    )
+    cache_dir = os.environ.get("OPENAI_INPAINT_CACHE_DIR", "cache/openai_inpaint")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    hasher = hashlib.sha256()
+    hasher.update(model.encode("utf-8"))
+    hasher.update(prompt.encode("utf-8"))
+    hasher.update(image.tobytes())
+    hasher.update(mask.tobytes())
+    cache_key = hasher.hexdigest()
+    cache_path = os.path.join(cache_dir, f"{cache_key}.png")
+
+    if os.path.exists(cache_path):
+        cached = cv2.imread(cache_path, cv2.IMREAD_COLOR)
+        if cached is not None and cached.shape == image.shape:
+            print(f"Using cached OpenAI inpaint result: {cache_path}")
+            return cached
+        print(f"Ignoring invalid OpenAI inpaint cache: {cache_path}")
+
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
+        print("Warning: OPENAI_API_KEY environment variable is not set. OpenAI inpainting will be skipped.")
         return None
 
     base_url = os.environ.get("OPENAI_BASE_URL")
+    if base_url and not base_url.endswith("/v1"):
+        base_url = base_url.rstrip("/") + "/v1"
     client = OpenAI(api_key=api_key, base_url=base_url)
 
     image_file = io.BytesIO(_encode_bgr_png_bytes(image))
@@ -469,21 +502,37 @@ def _run_openai_inpaint(image: np.ndarray, mask: np.ndarray) -> np.ndarray | Non
     mask_file.name = "mask.png"
 
     try:
+        print(f"Calling OpenAI image edit API (model={model})...")
         response = client.images.edit(
-            model=os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1"),
+            model=model,
             image=image_file,
             mask=mask_file,
-            prompt="Remove the text in the transparent masked regions and reconstruct the underlying page background naturally. Preserve all unmasked pixels exactly, including layout, colors, lines, diagrams, and textures. Do not add new text.",
+            prompt=prompt,
             n=1,
         )
         b64_data = response.data[0].b64_json
         if not b64_data:
+            print("OpenAI API returned empty b64_json.")
             return None
         cleaned = _decode_openai_image_result(base64.b64decode(b64_data))
-        if cleaned is not None and cleaned.shape == image.shape:
-            return cleaned
-        return None
-    except Exception:
+        raw_cache_path = os.path.join(cache_dir, f"{cache_key}.raw.png")
+        if cleaned is None:
+            print("OpenAI result image decode failed.")
+            return None
+        if cleaned.shape != image.shape:
+            cv2.imwrite(raw_cache_path, cleaned)
+            print(f"OpenAI result shape {cleaned.shape} does not match input shape {image.shape}. Raw result cached: {raw_cache_path}")
+            cleaned = cv2.resize(cleaned, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_CUBIC)
+        result = image.copy()
+        result[mask > 0] = cleaned[mask > 0]
+        cv2.imwrite(cache_path, result)
+        print(f"OpenAI inpainting successful. Cached result: {cache_path}")
+        return result
+    except Exception as e:
+        error_text = str(e)
+        print(f"OpenAI API error: {error_text}")
+        if "Tool choice 'image_generation' not found in 'tools' parameter" in error_text:
+            print("This usually means OPENAI_BASE_URL points to a proxy or compatible API that does not support gpt-image-2 via /v1/images/edits. Try the official OpenAI endpoint, or set OPENAI_IMAGE_MODEL to a model supported by that provider.")
         return None
 
 

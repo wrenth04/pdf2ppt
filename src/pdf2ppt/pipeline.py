@@ -20,6 +20,11 @@ def run_pipeline(
     deskew: bool = True,
     inpaint_backend: str = "openai",
 ):
+    import os
+    if inpaint_backend == "openai" and not os.environ.get("OPENAI_API_KEY"):
+        print("Warning: 'openai' inpaint backend requested but OPENAI_API_KEY is not set. Falling back to OpenCV (telea).")
+        inpaint_backend = "telea"
+
     if Path(input_path).suffix.lower() == ".pdf":
         doc = pdf_extractor.extract_document(
             input_pdf=input_path,

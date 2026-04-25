@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.scripts]
-pdf2ppt = "pdf2ppt.cli:main"
+pdf2ppt = "pdf2ppt.cli:entrypoint"
 
 [build-system]
 requires = ["setuptools>=61", "wheel"]

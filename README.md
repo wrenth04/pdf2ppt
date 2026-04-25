@@ -57,11 +57,14 @@ PaddleOCR model files are cached under `~/.paddlex/official_models/` (for exampl
 
 The image-only page path can use a mask-guided inpainting backend to remove baked-in text from the raster background before inserting it into PPTX.
 
-The default mode is `auto`, which prefers the local AI backend and falls back to OpenCV inpainting if needed. You can also force a backend with `--ocr-inpaint-backend`:
+The default mode is `auto`, which prefers the AI backend and falls back to OpenCV inpainting if needed. You can also force a backend with `--ocr-inpaint-backend`:
 
 - `auto` — prefer the AI backend, then fall back to OpenCV
 - `heavy` — force the stronger local AI backend
+- `openai` — use OpenAI image editing for high-quality background reconstruction (requires `OPENAI_API_KEY`)
 - `telea` — force OpenCV inpainting
+
+The `openai` backend uses the model specified by the `OPENAI_IMAGE_MODEL` environment variable (defaults to `gpt-image-2`).
 
 ```bash
 pip install simple-lama-inpainting Pillow

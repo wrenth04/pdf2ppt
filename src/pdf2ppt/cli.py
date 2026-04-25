@@ -1,5 +1,4 @@
 import typer
-from .pipeline import run_pipeline
 
 app = typer.Typer(add_completion=False, help="Convert PDF or image to editable PPTX with optional OCR")
 
@@ -20,6 +19,7 @@ def main(
     deskew: bool = typer.Option(True, help="Auto-detect rotation/deskew before OCR"),
     ocr_inpaint_backend: str = typer.Option("openai", help="auto|openai|heavy|telea for background cleanup"),
 ):
+    from .pipeline import run_pipeline
     run_pipeline(
         input_path=input_path,
         output_pptx=output_pptx,
