@@ -47,9 +47,9 @@ async def convert(
         description="OCR engine: paddle, hocr, or tesseract",
     ),
     deskew: bool = Form(True, description="Auto-detect rotation and deskew before OCR"),
-    ocr_inpaint_backend: Literal["auto", "heavy", "telea"] = Form(
-        "telea",
-        description="Background cleanup backend: auto, heavy, or telea",
+    ocr_inpaint_backend: Literal["auto", "openai", "heavy", "telea"] = Form(
+        "openai",
+        description="Background cleanup backend: auto, openai, heavy, or telea",
     ),
 ):
     if not _convert_lock.acquire(blocking=False):

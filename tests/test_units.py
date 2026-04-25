@@ -1,5 +1,6 @@
 import numpy as np
 from PIL import Image
+import io
 
 from pdf2ppt.model.elements import ImageElement, Rect, TextBox
 from pdf2ppt.pdf import ocr
@@ -202,3 +203,59 @@ def test_extract_document_raster_fallback_for_dominant_failed_image(monkeypatch)
         and el.paragraphs[0].runs[0].text == "OCR text"
         for el in page.elements
     )
+
+
+def test_openai_backend_dispatch_success(monkeypatch):
+    image = np.zeros((100, 100, 3), dtype=np.uint8)
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    mask[10:20, 10:20] = 255
+    mock_result = np.ones((100, 100, 3), dtype=np.uint8)
+
+    monkeypatch.setattr(ocr, "_run_openai_inpaint", lambda img, msk: mock_result)
+
+    result = ocr._run_inpaint_backend(image, mask, "openai")
+
+    assert np.array_equal(result, mock_result)
+
+
+def test_openai_backend_dispatch_fallback(monkeypatch):
+    image = np.zeros((100, 100, 3), dtype=np.uint8)
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    mask[10:20, 10:20] = 255
+
+    monkeypatch.setattr(ocr, "_run_openai_inpaint", lambda img, msk: None)
+
+    result = ocr._run_inpaint_backend(image, mask, "openai")
+
+    assert result is not None
+    assert result.shape == image.shape
+
+
+def test_openai_backend_empty_mask(monkeypatch):
+    image = np.zeros((100, 100, 3), dtype=np.uint8)
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    called = []
+
+    def fake_openai(img, msk):
+        called.append(True)
+        return img
+
+    monkeypatch.setattr(ocr, "_run_openai_inpaint", fake_openai)
+
+    result = ocr._run_inpaint_backend(image, mask, "openai")
+
+    assert np.array_equal(result, image)
+    assert not called
+
+
+def test_openai_mask_conversion_semantics():
+    mask = np.array([[0, 255], [255, 0]], dtype=np.uint8)
+    mask_bytes = ocr._encode_openai_mask_png_bytes(mask)
+
+    pil_mask = Image.open(io.BytesIO(mask_bytes)).convert("RGBA")
+    alpha = np.array(pil_mask)[:, :, 3]
+
+    assert alpha[0, 0] == 255
+    assert alpha[0, 1] == 0
+    assert alpha[1, 0] == 0
+    assert alpha[1, 1] == 255

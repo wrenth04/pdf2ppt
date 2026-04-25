@@ -8,10 +8,17 @@ import cv2
 import numpy as np
 import pytesseract
 from lxml import html
+import io
 from PIL import Image
 
 from ..model.elements import Paragraph, Rect, TextBox, TextRun
 from ..model.normalize import font_fallback
+
+try:
+    from openai import OpenAI  # type: ignore
+    _OPENAI_AVAILABLE = True
+except Exception:
+    _OPENAI_AVAILABLE = False
 
 try:
     from paddleocr import PaddleOCR  # type: ignore
@@ -168,6 +175,35 @@ def _deskew_image(image: np.ndarray) -> np.ndarray:
     M = cv2.getRotationMatrix2D(center, angle, 1.0)
     rotated = cv2.warpAffine(image, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     return rotated
+
+
+def _encode_bgr_png_bytes(image: np.ndarray) -> bytes:
+    rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    pil = Image.fromarray(rgb)
+    buf = io.BytesIO()
+    pil.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _encode_openai_mask_png_bytes(mask: np.ndarray) -> bytes:
+    # OpenAI mask: transparent (alpha=0) where we want to edit, opaque (alpha=255) otherwise
+    alpha = np.where(mask > 0, 0, 255).astype(np.uint8)
+    # Create RGBA image with zero RGB and the calculated alpha
+    rgba = np.zeros((mask.shape[0], mask.shape[1], 4), dtype=np.uint8)
+    rgba[..., 3] = alpha
+    pil = Image.fromarray(rgba, mode="RGBA")
+    buf = io.BytesIO()
+    pil.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _decode_openai_image_result(image_bytes: bytes) -> np.ndarray | None:
+    try:
+        pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        res = np.array(pil)
+        return cv2.cvtColor(res, cv2.COLOR_RGB2BGR)
+    except Exception:
+        return None
 
 
 def _parse_hocr_bbox(el) -> Rect | None:
@@ -411,14 +447,60 @@ def _run_diffusers_inpaint(image: np.ndarray, mask: np.ndarray) -> np.ndarray | 
     return cv2.cvtColor(result_arr, cv2.COLOR_RGB2BGR)
 
 
+def _run_openai_inpaint(image: np.ndarray, mask: np.ndarray) -> np.ndarray | None:
+    if not _OPENAI_AVAILABLE:
+        return None
+    if mask.max() == 0:
+        return image
+
+    import base64
+    import os
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    base_url = os.environ.get("OPENAI_BASE_URL")
+    client = OpenAI(api_key=api_key, base_url=base_url)
+
+    image_file = io.BytesIO(_encode_bgr_png_bytes(image))
+    image_file.name = "image.png"
+    mask_file = io.BytesIO(_encode_openai_mask_png_bytes(mask))
+    mask_file.name = "mask.png"
+
+    try:
+        response = client.images.edit(
+            model=os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1"),
+            image=image_file,
+            mask=mask_file,
+            prompt="Remove the text in the transparent masked regions and reconstruct the underlying page background naturally. Preserve all unmasked pixels exactly, including layout, colors, lines, diagrams, and textures. Do not add new text.",
+            n=1,
+        )
+        b64_data = response.data[0].b64_json
+        if not b64_data:
+            return None
+        cleaned = _decode_openai_image_result(base64.b64decode(b64_data))
+        if cleaned is not None and cleaned.shape == image.shape:
+            return cleaned
+        return None
+    except Exception:
+        return None
+
+
 def _run_inpaint_backend(image: np.ndarray, mask: np.ndarray, backend: str) -> np.ndarray | None:
     backend = backend.lower().strip()
     if mask.max() == 0:
         return image
     if backend == "telea":
         return cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
+    if backend == "openai":
+        cleaned = _run_openai_inpaint(image, mask)
+        if cleaned is not None:
+            return cleaned
+        return cv2.inpaint(image, mask, 3, cv2.INPAINT_TELEA)
     attempts = []
     if backend in {"auto", "heavy"}:
+        attempts.append(_run_openai_inpaint)
         attempts.append(_run_diffusers_inpaint)
     if backend == "auto":
         attempts.append(_run_simple_lama_inpaint)
@@ -518,7 +600,7 @@ def clean_image_background(
     languages: str,
     deskew: bool = True,
     engine: str = "paddle",
-    inpaint_backend: str = "auto",
+    inpaint_backend: str = "openai",
 ) -> tuple[List[TextBox], np.ndarray]:
     if deskew and engine != "paddle":
         image = _deskew_image(image)
@@ -549,7 +631,7 @@ def clean_image_background(
     return boxes, cleaned_image
 
 
-def clean_page_background(page, languages: str, deskew: bool = True, engine: str = "paddle", inpaint_backend: str = "auto") -> tuple[List[TextBox], np.ndarray]:
+def clean_page_background(page, languages: str, deskew: bool = True, engine: str = "paddle", inpaint_backend: str = "openai") -> tuple[List[TextBox], np.ndarray]:
     pix = page.get_pixmap()
     buf = np.frombuffer(pix.samples, dtype=np.uint8)
     if pix.n == 4:

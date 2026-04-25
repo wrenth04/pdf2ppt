@@ -76,7 +76,7 @@ def extract_document(
     ocr_lang: str = "eng+jpn+chi_sim+chi_tra",
     ocr_engine: str = "paddle",
     deskew: bool = True,
-    inpaint_backend: str = "auto",
+    inpaint_backend: str = "openai",
 ) -> DocumentModel:
     doc = fitz.open(input_pdf)
     page_indices = _parse_pages(pages, doc.page_count)

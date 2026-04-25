@@ -26,7 +26,7 @@ def extract_document(
     ocr_lang: str = "eng+jpn+chi_sim+chi_tra",
     ocr_engine: str = "paddle",
     deskew: bool = True,
-    inpaint_backend: str = "telea",
+    inpaint_backend: str = "openai",
 ) -> DocumentModel:
     if pages:
         raise ValueError("pages is only supported for PDF input")

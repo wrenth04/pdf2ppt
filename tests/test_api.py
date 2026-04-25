@@ -43,6 +43,7 @@ def test_convert_success(monkeypatch, tmp_path):
     assert captured["pages"] == "1-2"
     assert captured["ocr"] == "on"
     assert captured["ocr_engine"] == "paddle"
+    assert captured["inpaint_backend"] == "openai"
 
 
 def test_convert_defaults_pages_to_null(monkeypatch):
@@ -61,6 +62,7 @@ def test_convert_defaults_pages_to_null(monkeypatch):
 
     assert response.status_code == 200
     assert captured["pages"] is None
+    assert captured["inpaint_backend"] == "openai"
 
 
 def test_convert_blank_pages_becomes_null(monkeypatch):
@@ -86,6 +88,25 @@ def test_convert_openapi_pages_defaults_to_empty_string():
     schema = app.openapi()
     pages = schema["components"]["schemas"]["Body_convert_convert_post"]["properties"]["pages"]
     assert pages.get("default") == ""
+
+
+def test_convert_accepts_openai_inpaint_backend(monkeypatch):
+    captured = {}
+
+    def fake_run_pipeline(**kwargs):
+        captured.update(kwargs)
+        Path(kwargs["output_pptx"]).write_bytes(b"pptx-bytes")
+
+    monkeypatch.setattr("pdf2ppt.api.run_pipeline", fake_run_pipeline)
+
+    response = client.post(
+        "/convert",
+        files={"file": ("input.pdf", _pdf_bytes(), "application/pdf")},
+        data={"ocr_inpaint_backend": "openai"},
+    )
+
+    assert response.status_code == 200
+    assert captured["inpaint_backend"] == "openai"
 
 
 def test_convert_rejects_second_request(monkeypatch):

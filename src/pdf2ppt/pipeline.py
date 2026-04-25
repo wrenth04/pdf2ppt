@@ -18,7 +18,7 @@ def run_pipeline(
     ocr_lang: str = "eng+jpn+chi_sim+chi_tra",
     ocr_engine: str = "paddle",
     deskew: bool = True,
-    inpaint_backend: str = "telea",
+    inpaint_backend: str = "openai",
 ):
     if Path(input_path).suffix.lower() == ".pdf":
         doc = pdf_extractor.extract_document(
